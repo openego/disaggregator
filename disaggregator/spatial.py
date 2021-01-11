@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 cfg = get_config()
 
 
-def disagg_households_power(by, weight_by_income=False, original=False, 
+def disagg_households_power(by, weight_by_income=False, original=False,
                             **kwargs):
     """
     Perform spatial disaggregation of electric power in [GWh/a] by key and
@@ -57,9 +57,12 @@ def disagg_households_power(by, weight_by_income=False, original=False,
     pd.DataFrame or pd.Series
     """
     year = kwargs.get('year', cfg['base_year'])
+    source = kwargs.get('source', cfg['elc_cons_HH_by_size']['source'])
+
     if by == 'households':
         # Bottom-Up: Power demand by household sizes in [GWh/a]
-        power_per_HH = elc_consumption_HH(by_HH_size=True, year=year) / 1e3
+        power_per_HH = elc_consumption_HH(
+            by_HH_size=True, year=year, source=source) / 1e3
         df = households_per_size(original=original, year=year) * power_per_HH
     elif by == 'population':
         # Top-Down: Power demand for entire country in [GWh/a]

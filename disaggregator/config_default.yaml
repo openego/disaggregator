@@ -27,13 +27,13 @@ elc_cons_HH_total:
 
 elc_cons_HH_by_size:
     source: database
-    filename: elc_consumption_by_HH_size_no_dhw.csv
+    filename: elc_consumption_by_HH_size.csv
     table_id: 13
 
 heat_consumption_HH:
     source: local
     filename: heat_consumption_households.csv
-
+    
 gas_consumption_HH:
     source: database
     filename: gas_consumption_households.csv
@@ -86,7 +86,7 @@ energy_balance_values:
     internal_id:
         0: -1  # line in balance sheet, e.g. 52=private households
         1: -1  # column in balance sheet, e.g. 29=power
-
+    
 
 elc_cons_HH_spatial:
     source: database
@@ -152,7 +152,7 @@ elc_cons_HH_spatiotemporal:
     source: database
     table_id: 7
     freq: 1H
-
+    
 # --- Variable Type Configuration ---
 dtypes:
     ags_lk: str
