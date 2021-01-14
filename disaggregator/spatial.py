@@ -58,11 +58,12 @@ def disagg_households_power(by, weight_by_income=False, original=False,
     """
     year = kwargs.get('year', cfg['base_year'])
     source = kwargs.get('source', cfg['elc_cons_HH_by_size']['source'])
+    filename = kwargs.get('filename', cfg['elc_cons_HH_spatial']['filename'])
 
     if by == 'households':
         # Bottom-Up: Power demand by household sizes in [GWh/a]
         power_per_HH = elc_consumption_HH(
-            by_HH_size=True, year=year, source=source) / 1e3
+            by_HH_size=True, year=year, source=source, filename=filename) / 1e3
         df = households_per_size(original=original, year=year) * power_per_HH
     elif by == 'population':
         # Top-Down: Power demand for entire country in [GWh/a]

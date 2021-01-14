@@ -54,12 +54,14 @@ def elc_consumption_HH(by_HH_size=False, **kwargs):
     year = kwargs.get('year', cfg['base_year'])
     force_update = kwargs.get('force_update', False)
     source = kwargs.get('source', cfg[key]['source'])
+    filename = kwargs.get('filename', cfg['elc_cons_HH_spatial']['filename'])
+
     if source not in ['local', 'database']:
         raise KeyError("Wrong source key given in config.yaml - must be either"
                        "'local' or 'database' but is: {}".format(source))
     if by_HH_size:
         if source == 'local':
-            df = read_local(data_in('dimensionless', cfg[key]['filename']))
+            df = read_local(data_in('dimensionless', filename))
         elif source == 'database':
             df = database_get('spatial', table_id=cfg[key]['table_id'],
                               force_update=force_update)
@@ -839,9 +841,10 @@ def elc_consumption_HH_spatial(**kwargs):
     source = kwargs.get('source', cfg['elc_cons_HH_spatial']['source'])
     table_id = kwargs.get('table_id', cfg['elc_cons_HH_spatial']['table_id'])
     force_update = kwargs.get('force_update', False)
+    filename = kwargs.get('filename', cfg['elc_cons_HH_spatial']['filename'])
 
     if source == 'local':
-        fn = data_in('regional', cfg['elc_cons_HH_spatial']['filename'])
+        fn = data_in('regional', filename)
         df = read_local(fn, year=year)
     elif source == 'database':
         df = database_get('spatial', table_id=table_id, year=year,
