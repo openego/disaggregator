@@ -384,9 +384,8 @@ def generate_specific_consumption_per_branch(**kwargs):
     while(x):
         try:
             df_balance = pd.read_excel(data_in('dimensionless',
-                                               'bilanz'+str(year1)[-2:]+'d.xlsx',
-                                               engine='openpyxl'),
-                                       sheet_name='nat', skiprows=3)
+                                               'bilanz'+str(year1)[-2:]+'d.xlsx'),
+                                       sheet_name='nat', skiprows=3, engine='openpyxl')
             x = False
         except FileNotFoundError:
             year1 -= 1
