@@ -368,7 +368,7 @@ def generate_specific_consumption_per_branch(**kwargs):
     # use factor from sheet to decompose energy consumption
     f = ('Decomposition Factors Industrial Energy Demand.xlsx')
     df_decom = pd.read_excel(data_in('dimensionless', f),
-                               sheet_name='Tabelle1')
+                               sheet_name='Tabelle1', engine='openpyxl')
     df_decom.set_index('WZ', inplace=True)
     df_decom = spez_gv.merge(df_decom, how='left',
                              left_index=True, right_index=True)
@@ -384,7 +384,8 @@ def generate_specific_consumption_per_branch(**kwargs):
     while(x):
         try:
             df_balance = pd.read_excel(data_in('dimensionless',
-                                               'bilanz'+str(year1)[-2:]+'d.xlsx'),
+                                               'bilanz'+str(year1)[-2:]+'d.xlsx',
+                                               engine='openpyxl'),
                                        sheet_name='nat', skiprows=3)
             x = False
         except FileNotFoundError:
