@@ -1325,7 +1325,8 @@ def efficiency_enhancement(source, **kwargs):
         # if year is in the future, function returns a df with calculated
         # enhancemen-rates based on year 2018
         es_rate = (pd.read_excel(data_in('temporal',
-                                         'Efficiency_Enhancement_Rates.xlsx'))
+                                         'Efficiency_Enhancement_Rates.xlsx'),
+                                 engine='openpyxl')
                    .set_index('WZ'))
         df = pow((-es_rate + 1), (year - 2018))
         if source == 'power':
@@ -1339,7 +1340,8 @@ def efficiency_enhancement(source, **kwargs):
         # if year is below 2019, function returns df with the same format as
         # above, but only with "1"-entries. This could be done more elegantly.
         es_rate = (pd.read_excel(data_in('temporal',
-                                         'Efficiency_Enhancement_Rates.xlsx'))
+                                         'Efficiency_Enhancement_Rates.xlsx'),
+                                 engine='openpyxl')
                    .set_index('WZ'))
         df = pow((-es_rate + 1), (1))
         if source == 'power':
@@ -1782,7 +1784,8 @@ def CTS_power_slp_generator(state, **kwargs):
     for profile in ['H0', 'L0', 'L1', 'L2', 'G0', 'G1', 'G2', 'G3', 'G4',
                     'G5', 'G6']:
         f = '39_VDEW_Strom_Repräsentative Profile_{}.xlsx'.format(profile)
-        df_load = pd.read_excel(data_in('temporal', 'Power Load Profiles', f))
+        df_load = pd.read_excel(data_in('temporal', 'Power Load Profiles', f)
+                                , engine='openpyxl')
         df_load.columns = ['Hour', 'SA_WIZ', 'SU_WIZ', 'WD_WIZ', 'SA_SOZ',
                            'SU_SOZ', 'WD_SOZ', 'SA_UEZ', 'SU_UEZ', 'WD_UEZ']
         df_load.loc[1] = df_load.loc[len(df_load) - 2]
