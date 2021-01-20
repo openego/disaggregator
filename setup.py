@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 setup(
     name='disaggregator',
-    packages=find_packages(),
+    packages= ['disaggregator'],
     include_package_data=True,
     install_requires=['numpy',
                       'pandas',
@@ -15,5 +15,7 @@ setup(
                       'xarray',
                       'xlrd',
                       'matplotlib',
-                      'holidays']
+                      'holidays'],
+    package_data={
+        "": ["*.csv", "*.xlsx"]}
 )
