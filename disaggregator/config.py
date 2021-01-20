@@ -30,14 +30,14 @@ logger = logging.getLogger(__name__)
 
 
 def data_out(*fn):
-    dirpath = os.path.join(os.path.dirname(__file__), '..', 'data_out')
+    dirpath = os.path.join(os.path.dirname(__file__), 'data_out')
     if not os.path.isdir(dirpath):
         os.mkdir(dirpath)
     return os.path.join(dirpath, *fn)
 
 
 def data_in(*fn):
-    return os.path.join(os.path.dirname(__file__), '..', 'data_in', *fn)
+    return os.path.join(os.path.dirname(__file__), 'data_in', *fn)
 
 
 def get_config(filename=None, **kwargs):
