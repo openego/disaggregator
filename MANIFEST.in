@@ -1,0 +1,10 @@
+include README.md
+include LICENSE
+include MANIFEST.in
+include disaggregator/config.yaml
+include disaggregator/data_in/dimensionless/*.csv
+include disaggregator/data_in/dimensionless/*.xlsx
+include disaggregator/data_in/regional/*.csv
+include disaggregator/data_in/regional/*.xlsx
+include disaggregator/data_in/temporal/*.csv
+include disaggregator/data_in/temporal/*.xlsx
