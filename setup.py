@@ -7,7 +7,7 @@ setup(
     include_package_data=True,
     install_requires=['numpy',
                       'pandas',
-                      'tables',                      
+                      'tables',
                       'pyyaml',
                       'requests',
                       'geopandas',
@@ -15,7 +15,8 @@ setup(
                       'xarray',
                       'xlrd',
                       'matplotlib',
-                      'holidays'],
+                      'holidays',
+                      'openpyxl'],
     package_data={
         "": ["*.csv", "*.xlsx"]}
 )
