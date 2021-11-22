@@ -155,7 +155,7 @@ elc_cons_HH_spatiotemporal:
     
 # --- Variable Type Configuration ---
 dtypes:
-    ags_lk: str
+    ags_lk: int
     id: int
     id_temporal: int
     id_spatial: int
