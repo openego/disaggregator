@@ -843,16 +843,16 @@ def disagg_temporal_gas_CTS(detailed=False, use_nuts3code=False, **kwargs):
             tw_df_lk.index = pd.DatetimeIndex(tw_df_lk.index)
             last_hour = tw_df_lk.copy()[-1:]
             last_hour.index = last_hour.index + timedelta(1)
-            tw_df_lk = tw_df_lk.append(last_hour)
-            tw_df_lk = tw_df_lk.resample('H').pad()
+            tw_df_lk = pd.concat([tw_df_lk, last_hour])
+            tw_df_lk = tw_df_lk.resample('H').ffill()
             tw_df_lk = tw_df_lk[:-1]
 
             temp_cal = temp_calender_df.copy()
             temp_cal = temp_cal[['Date', 'Tagestyp', lk]].set_index("Date")
             last_hour = temp_cal.copy()[-1:]
             last_hour.index = last_hour.index + timedelta(1)
-            temp_cal = temp_cal.append(last_hour)
-            temp_cal = temp_cal.resample('H').pad()
+            temp_cal = pd.concat([temp_cal, last_hour])
+            temp_cal = temp_cal.resample('H').ffill()
             temp_cal = temp_cal[:-1]
             temp_cal['Stunde'] = pd.DatetimeIndex(temp_cal.index).time
             temp_cal = temp_cal.set_index(["Tagestyp", lk, 'Stunde'])
@@ -972,16 +972,16 @@ def disagg_temporal_gas_households(use_nuts3code=False, how='top-down',
             tw_df_lk.index = pd.DatetimeIndex(tw_df_lk.index)
             last_hour = tw_df_lk.copy()[-1:]
             last_hour.index = last_hour.index + timedelta(1)
-            tw_df_lk = tw_df_lk.append(last_hour)
-            tw_df_lk = tw_df_lk.resample('H').pad()
+            tw_df_lk = pd.concat([tw_df_lk, last_hour])
+            tw_df_lk = tw_df_lk.resample('H').ffill()
             tw_df_lk = tw_df_lk[:-1]
 
             temp_cal = temp_calender_df.copy()
             temp_cal = temp_cal[['Date', 'Tagestyp', lk]].set_index("Date")
             last_hour = temp_cal.copy()[-1:]
             last_hour.index = last_hour.index + timedelta(1)
-            temp_cal = temp_cal.append(last_hour)
-            temp_cal = temp_cal.resample('H').pad()
+            temp_cal = pd.concat([temp_cal, last_hour])
+            temp_cal = temp_cal.resample('H').ffill()
             temp_cal = temp_cal[:-1]
             temp_cal['Stunde'] = pd.DatetimeIndex(temp_cal.index).time
             temp_cal = temp_cal.set_index(["Tagestyp", lk, 'Stunde'])
