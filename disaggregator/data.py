@@ -198,7 +198,7 @@ def t_allo(**kwargs):
     else:
         periods = 35040
     df = ambient_T(year=hist_year, internal_id=1)
-    df = (df.assign(date=pd.date_range((str(hist_year) + '-01-01'),
+    df = (df.assign(date=pd.date_range((str(year) + '-01-01'),
                     periods=periods / 4, freq='H'))
             .set_index('date').resample('D').mean())
     df = (pd.merge(df.transpose(), dic_nuts3, how='right',
