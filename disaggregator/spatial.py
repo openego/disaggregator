@@ -18,27 +18,98 @@
 """
 Provides functions for spatial disaggregation
 """
+# %% Imports
 
 from .data import (elc_consumption_HH, heat_consumption_HH, gas_consumption_HH,
                    population, households_per_size, income, stove_assumptions,
                    living_space, hotwater_shares, heat_demand_buildings,
-                   employees_per_branch_district, efficiency_enhancement,
+                   employees_per_branch, efficiency_enhancement,
                    generate_specific_consumption_per_branch_and_district)
-from .config import (data_in, dict_region_code, get_config)
-
+from .config import (dict_region_code, get_config)
+import numpy as np
 import pandas as pd
-import os
-import datetime
 import logging
 logger = logging.getLogger(__name__)
-cfg = get_config()
 
 
-def disagg_households_power(by, weight_by_income=False, original=False, 
+# %%  Generic functions
+
+
+def disagg_topdown(total, keys1, keys2=None, names=None):
+    """
+    Disaggregate DataFrame `df` by regional `keys1` and optionally by `keys2`.
+
+    Example `keys1` could be federal states (BL) and `keys2` districts (LK).
+
+    Parameters
+    ----------
+    total : float or list or pd.Series
+        The total value(s) to be disaggregated
+    keys1 : pd.Series or dict
+        The distribution keys
+    keys2 : pd.Series or dict
+        The distribution keys
+    names : list, optional
+
+    Returns
+    -------
+        pd.DataFrame
+    """
+    # Cleanup and prepare data
+    if isinstance(total, float) or isinstance(total, list):
+        tot = pd.Series(data=total, index=names)
+    elif isinstance(total, pd.Series) or isinstance(total, dict):
+        tot = pd.Series(total)
+    else:
+        raise ValueError('`total` must be float, list, dict or pd.Series!')
+    if isinstance(keys1, pd.Series) or isinstance(keys1, dict):
+        keys1 = pd.Series(keys1)
+    else:
+        raise ValueError('`keys1` must be dict or pd.Series!')
+    if keys2 is not None:
+        if isinstance(keys1, pd.Series) or isinstance(keys1, dict):
+            keys1 = pd.Series(keys1)
+        else:
+            raise ValueError('`keys1` must be dict or pd.Series!')
+
+    # Disaggregate by keys1
+    ser_k1 = keys1 / keys1.sum()
+    df = pd.DataFrame(data=np.outer(ser_k1, tot),
+                      index=ser_k1.index, columns=tot.index)
+    cols_orig = df.columns
+    df.columns = [str(c) for c in df.columns]
+
+    # Disaggregate by keys2
+    if keys2 is not None:
+        keys2.name = 'original'
+        df_k2 = (keys2.reset_index().rename(columns={'index': 'nuts3'})
+                      .assign(nuts1=lambda x: x.nuts3.str[0:3]))
+        # If in one nuts1 region all are zero, then replace all zeros by one,
+        # in order to avoid division by zero and achieve equal distribution
+        zero_regs = list(df_k2.groupby('nuts1').sum()
+                              .loc[lambda x: x.original == 0.0].index)
+        df_k2.loc[df_k2['nuts1'].isin(zero_regs), 'original'] = 1
+
+        nuts1_sums = (df_k2.groupby('nuts1').agg(sum).reset_index()
+                           .rename(columns={'original': 'sums'}))
+        df_k2 = (df_k2.merge(nuts1_sums, how='left', on='nuts1')
+                      .assign(ratio=lambda x: x['original']/x['sums']))
+        for col, ser in df.iteritems():
+            df_k2 = df_k2.assign(**{col: lambda x: x.nuts1.map(ser) * x.ratio})
+        df = df_k2.set_index('nuts3').reindex(df.columns, axis=1)
+
+    # restore original column namings:
+    df.columns = cols_orig
+    return df
+
+
+# %%  Sector-specific functions
+
+
+def disagg_households_power(by, weight_by_income=False, scale_by_pop=False,
                             **kwargs):
     """
-    Perform spatial disaggregation of electric power in [GWh/a] by key and
-    possibly weight by income.
+    Spatial disaggregation of elc. power in [GWh/a] by key (weighted by income)
 
     Parameters
     ----------
@@ -56,14 +127,18 @@ def disagg_households_power(by, weight_by_income=False, original=False,
     -------
     pd.DataFrame or pd.Series
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     if by == 'households':
         # Bottom-Up: Power demand by household sizes in [GWh/a]
         power_per_HH = elc_consumption_HH(by_HH_size=True, year=year) / 1e3
-        df = households_per_size(original=original, year=year) * power_per_HH
+        df = (households_per_size(original=scale_by_pop, year=year)
+              * power_per_HH)
     elif by == 'population':
         # Top-Down: Power demand for entire country in [GWh/a]
-        power_nuts0 = elc_consumption_HH(year=year) / 1e3
+        power_nuts0 = kwargs.get('power_nuts0', False)
+        if power_nuts0 is False:
+            power_nuts0 = elc_consumption_HH(year=year) / 1e3
         distribution_keys = population(year=year) / population(year=year).sum()
         df = distribution_keys * power_nuts0
     else:
@@ -88,6 +163,7 @@ def disagg_households_heat(by, weight_by_income=False, **kwargs):
     -------
     pd.DataFrame
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     if by not in ['households', 'buildings']:
         raise ValueError('The heating demand of households depends mainly on '
@@ -110,8 +186,7 @@ def disagg_households_heat(by, weight_by_income=False, **kwargs):
 def disagg_households_gas(how='top-down', weight_by_income=False,
                           original=False, **kwargs):
     """
-    Perform spatial disaggregation of gas demand and possibly adjust
-    by income.
+    Return spatial disaggregation of gas demand (possibly adjusted by income).
 
     Parameters
     ----------
@@ -129,6 +204,7 @@ def disagg_households_gas(how='top-down', weight_by_income=False,
     -------
     pd.DataFrame or pd.Series
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     gas_nuts0 = gas_consumption_HH(year=year)
     # Derive distribution keys
@@ -151,7 +227,7 @@ def disagg_households_gas(how='top-down', weight_by_income=False,
     elif how == 'bottom-up':
         logger.info('Calculating regional gas demands bottom-up.')
         # uniform non-matching vintage sections
-        new_m2_vintages = {'A_<1900': 'A_<1948',
+        new_m2_vintages = {'A_<1900':     'A_<1948',
                            'B_1900-1945': 'A_<1948',
                            'C_1946-1960': 'B_1949-1968',
                            'D_1961-1970': 'B_1949-1968',
@@ -169,7 +245,7 @@ def disagg_households_gas(how='top-down', weight_by_income=False,
                            'P_2017': 'F_>2000',
                            'Q_2018': 'F_>2000',
                            'R_2019': 'F_>2000'}
-        new_dem_vintages = {'A_<1859': 'A_<1948',
+        new_dem_vintages = {'A_<1859':     'A_<1948',
                             'B_1860-1918': 'A_<1948',
                             'C_1919-1948': 'A_<1948',
                             'D_1949-1957': 'B_1949-1968',
@@ -296,9 +372,10 @@ def disagg_CTS_industry(source, sector,
         "`sector` must be in ['CTS', 'industry']"
 
     # generate specific consumptions
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     [spez_sv, spez_gv] = generate_specific_consumption_per_branch_and_district(
-                                                  8, 8, no_self_gen, year=year)
+        8, 8, no_self_gen, year=year)
     if source == 'power':
         spez_vb = spez_sv
     else:
@@ -315,8 +392,7 @@ def disagg_CTS_industry(source, sector,
 
     spez_vb = spez_vb.loc[wz]
     df = (pd.DataFrame(
-        data=(employees_per_branch_district(year=year).loc[spez_vb.index]
-                                                      .values
+        data=(employees_per_branch(year=year).loc[spez_vb.index].values
               * spez_vb.values),
         index=spez_vb.index,
         columns=spez_vb.columns))
@@ -328,10 +404,11 @@ def disagg_CTS_industry(source, sector,
     return df
 
 
-# --- Utility functions -------------------------------------------------------
+# %% Utility functions
 
 
 def adjust_by_income(df, **kwargs):
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     income_keys = income(year=year) / income(year=year).mean()
     return df.multiply(income_keys, axis=0)

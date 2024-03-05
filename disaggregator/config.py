@@ -20,7 +20,6 @@ Provides configuration settings.
 """
 
 import os
-import yaml
 import requests
 import pandas as pd
 import logging
@@ -30,32 +29,60 @@ from ast import literal_eval as lit_eval
 logger = logging.getLogger(__name__)
 
 
-def data_out(*fn):
-    dirpath = os.path.join(os.path.dirname(__file__), 'data_out')
+def data_out(*fn, force_dir=True):
+    dirpath = os.path.join(os.path.dirname(__file__), '..', 'data_out')
+    # Always make data_out directory if non-existent
+
     if not os.path.isdir(dirpath):
         os.mkdir(dirpath)
-    return os.path.join(dirpath, *fn)
+    full_path = os.path.join(dirpath, *fn)
+    if force_dir:
+        new_dir = os.path.dirname(full_path)
+        if not os.path.isdir(new_dir):
+            os.mkdir(new_dir)
+    return full_path
 
 
 def data_in(*fn):
     return os.path.join(os.path.dirname(__file__), 'data_in', *fn)
 
 
-def get_config(filename=None, **kwargs):
+def get_config(filename=None, use_ruamel=True, **kwargs):
+    """
+    Read the config.yaml file from input folder.
+    """
+    if use_ruamel:
+        # This one supports YAML Spec 1.2 w/o the problems mentioned below.
+        import ruamel_yaml
+    else:
+        # Warning: As of 11/2020 PyYAML only supports YAML Spec 1.1, which can
+        # cause problems as many expressions (e.g. N) are interpreted as bool.
+        import yaml
+
+    # Check if `config.yaml` exists
     if filename is None:
         filename = os.path.join(os.path.dirname(__file__), 'config.yaml')
+    else:
+        filename = os.path.join(os.path.dirname(__file__), filename)
+
     assert os.path.exists(filename), (
         "The config file '{}' does not exist yet. "
         "Copy config_example.yaml to config.yaml and fill in details, "
         "as necessary.".format(filename))
-    yaml_ver = [int(v) for v in yaml.__version__.split('.')]
-    if (yaml_ver[0] > 5) or (yaml_ver[0] == 5 and yaml_ver[1] >= 1):
+
+    if use_ruamel:
         with open(filename) as f:
-            config = yaml.load(f, Loader=yaml.FullLoader)
+            config = ruamel_yaml.load(f, Loader=ruamel_yaml.Loader)
     else:
-        logger.warn("Please update your `PyYAML` package to v5.1 or higher.")
-        with open(filename) as f:
-            config = yaml.load(f)
+        yaml_ver = [int(v) for v in yaml.__version__.split('.')]
+        if (yaml_ver[0] > 5) or (yaml_ver[0] == 5 and yaml_ver[1] >= 1):
+            with open(filename) as f:
+                config = yaml.load(f, Loader=yaml.FullLoader)
+        else:
+            logger.warn("Please update `PyYAML` package to v5.1 or higher.")
+            with open(filename) as f:
+                config = yaml.load(f)
+
     return config
 
 
@@ -135,6 +162,13 @@ def clear_local_cache():
         logger.info('Local cache already empty.')
 
 
+def literal_converter(val):
+    try:
+        return lit_eval(val)
+    except (SyntaxError, ValueError):
+        return val
+
+
 def dict_region_code(keys='id_ags', values='natcode_nuts3', level='lk',
                      raw=False, **kwargs):
     """
@@ -175,8 +209,7 @@ def dict_region_code(keys='id_ags', values='natcode_nuts3', level='lk',
                    'id_ags_bl', 'ags_bl', 'id_ags', 'bl']
     else:
         raise ValueError("`level` must be in ['lk', 'bl']")
-    assert keys in columns, "`keys` must be in {}".format(columns)
-    assert values in columns, "`values` must be in {}".format(columns)
+
     # Read the requested data
     if dict_source == 'local' and level == 'lk':
         df = pd.read_csv(data_in('regional/t_nuts3_lk.csv'), encoding='utf-8')
@@ -188,23 +221,39 @@ def dict_region_code(keys='id_ags', values='natcode_nuts3', level='lk',
         df = database_raw('t_nuts1_bl')
     else:
         raise ValueError("ELSE reached, this cannot be!")
+
     # Filter and return
+    if raw:
+        return df
+    else:
+        keys = 'id_ags' if keys == 'id_region' else keys
+        values = 'id_ags' if values == 'id_region' else values
+        assert keys in columns, "`keys` must be in {}".format(columns)
+        assert values in columns, "`values` must be in {}".format(columns)
+        return df.set_index(keys).loc[:, values].to_dict()
+
+
+def dict_wz(keys='WZ', values='Minititel', raw=False):
+    """
+    Return dict to convert from/to WZ number, sector or title.
+
+    Source:
+        https://www.klassifikationsserver.de/klassService/jsp/variant/variantInfo.jsf
+    """
+    df = pd.read_excel(data_in('dimensionless', 'WZ_2008.xlsx'),
+                       sheet_name='Nur_WZ', index_col=None)
+    assert keys in df.columns, "`keys` must be a valid column header!"
+    assert values in df.columns, "`values` must be a valid column header!"
+
     if raw:
         return df
     else:
         return df.set_index(keys).loc[:, values].to_dict()
 
 
-def literal_converter(val):
-    try:
-        return lit_eval(val)
-    except (SyntaxError, ValueError):
-        return val
-
-
 def wz_dict():
     """
-    This dictionary translates the database namings to real WZ branch names.
+    Translate the database namings to real WZ branch names or groups.
     """
     return {2: '1', 3: '2', 4: '3', 6: '5', 7: '6', 8: '7-9', 10: '10-12',
             11: '13-15', 12: '16', 13: '17', 14: '18', 15: '19', 18: '20',
@@ -219,8 +268,7 @@ def wz_dict():
 
 def hist_weather_year():
     """
-    This dictionary assigns the temperature data of a historical year to
-    future years
+    Assign temperature data of a historical year to a future year.
     """
     return {2000: 2000, 2001: 2001, 2002: 2002, 2003: 2003, 2004: 2004,
             2005: 2005, 2006: 2006, 2007: 2007, 2008: 2008, 2009: 2009,
@@ -234,7 +282,7 @@ def hist_weather_year():
 
 def bl_dict():
     """
-    This dictionary translates the Bundesland number to its abbreciation.
+    Translate the federal state (Bundesland) number to its abbreviation.
     """
     return {1: 'SH', 2: 'HH', 3: 'NI', 4: 'HB', 5: 'NW', 6: 'HE',
             7: 'RP', 8: 'BW', 9: 'BY', 10: 'SL', 11: 'BE', 12: 'BB',
@@ -243,7 +291,7 @@ def bl_dict():
 
 def slp_branch_cts_power():
     """
-    This dictionary assignes a power load profile (SLP) to every CTS branch
+    Assign a power load profile (SLP) to every CTS branch by WZ number.
     """
     return {1: 'L0', 2: 'L0', 3: 'G3', 35: 'G3', 36: 'G3', 37: 'G3',
             38: 'G3', 39: 'G3', 41: 'G1', 42: 'G1', 43: 'G1', 45: 'G4',
@@ -259,7 +307,7 @@ def slp_branch_cts_power():
 
 def slp_branch_cts_gas():
     """
-    This dictionary assignes a gas load profile to every CTS branch
+    Assign a gas load profile (SLP) to each CTS branch by WZ number.
     """
     return {1: 'GB', 2: 'GB', 3: 'GB', 36: 'MF', 37: 'MF', 38: 'BD', 39: 'BD',
             41: 'MK', 42: 'MK', 43: 'MK', 45: 'MK', 46: 'HA', 47: 'HA',
@@ -275,16 +323,48 @@ def slp_branch_cts_gas():
 
 def slp_household_gas():
     """
-    This dictionary assignes a gas load profile to every CTS branch
+    Assign a gas load profile to each CTS branch
     """
     return {'EFH': 'SpaceHeating-EFH',
             'MFH': 'SpaceHeating-MFH',
             'Cooking-HW': 'Cooking_HotWater-HKO'}
 
 
+def blp_wz_list():
+    """
+    Return list w/ all industry branches for which load profiles exist.
+    """
+    return [10, 11, 12, 17, 21, 22, 24, 25, 26, 28, 29, 32, 37, 38, 41, 42, 43,
+            46, 47, 52, 55, 58, 59, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72,
+            73, 74, 75, 77, 78, 82, 84, 85, 86, 87, 88, 90, 91, 93, 94, 95,
+            96, 99]
+
+
+def blp_branch_cts_power():
+    """
+    Describe which industrial branch can be represented by a load profile that
+    is based on measured data.
+
+    Returns
+    -------
+        dict
+    """
+    return {10: "WZ10", 11: "WZ11", 12: "WZ12", 17: "WZ17", 21: "WZ21",
+            22: "WZ22", 24: "WZ24", 25: "WZ25", 26: "WZ26", 28: "WZ28",
+            29: "WZ29", 32: "WZ32", 37: "WZ37", 38: "WZ38", 41: "WZ41",
+            42: "WZ41", 43: "WZ41", 46: "WZ46", 47: "WZ47", 52: "WZ52",
+            55: "WZ55", 58: "WZ64", 59: "WZ64", 62: "WZ62", 63: "WZ63",
+            64: "WZ64", 65: "WZ64", 66: "WZ64", 68: "WZ64", 69: "WZ64",
+            70: "WZ64", 71: "WZ64", 72: "WZ72", 73: "WZ64", 74: "WZ64",
+            75: "WZ64", 77: "WZ77", 78: "WZ64", 82: "WZ82", 84: "WZ84",
+            85: "WZ85", 86: "WZ86", 87: "WZ87", 88: "WZ88", 90: "WZ90",
+            91: "WZ91", 93: "WZ93", 94: "WZ94", 95: "WZ64", 96: "WZ64",
+            99: "WZ64"}
+
+
 def shift_profile_industry():
     """
-    This dictionary assignes a shift profile to every industry branch
+    Assign a shift profile to every industry branch.
     """
     return {5: 'S3_WT_SA', 6: 'S3_WT_SA_SO', 7: 'S3_WT_SA', 8: 'S3_WT_SA',
             9: 'S3_WT_SA', 10: 'S2_WT', 11: 'S3_WT', 12: 'S3_WT_SA',
@@ -298,7 +378,7 @@ def shift_profile_industry():
 
 def gas_load_profile_parameters_dict():
     """
-    This dictionary assignes parameters to gas load profiles
+    Assign parameters to gas load profiles.
     """
     return {'A': {'BA': 0.277008711731108, 'BD': 1.4633681573375,
                   'BH': 0.987428301992787, 'GA': 1.15820816823062,
@@ -311,7 +391,8 @@ def gas_load_profile_parameters_dict():
             'B': {'BA': -33.0, 'BD': -36.17941165, 'BH': -35.25321235,
                   'GA': -36.28785839, 'GB': -37.5, 'HA': -36.96500652,
                   'KO': -35.14125631, 'MF': -34.72136051, 'MK': -34.88061302,
-                  'PD': -35.8, 'WA': -36.02379115, 'SpaceHeating-MFH': -34.7213605,
+                  'PD': -35.8, 'WA': -36.02379115,
+                  'SpaceHeating-MFH': -34.7213605,
                   'SpaceHeating-EFH': -37.1833141,
                   'Cooking_HotWater-HKO': -24.4392968},
             'C': {'BA': 5.72123025, 'BD': 5.926516165, 'BH': 6.154440641,

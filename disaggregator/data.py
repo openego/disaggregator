@@ -18,22 +18,23 @@
 """
 Provides functions to import all relevant data.
 """
+# %% Imports
 
 import pandas as pd
-import numpy as np
 import logging
 import holidays
 import datetime
 from collections import OrderedDict
 from collections.abc import Iterable
 from .config import (get_config, data_in, data_out, database_raw,
-                     dict_region_code, literal_converter, wz_dict,
-                     hist_weather_year, gas_load_profile_parameters_dict)
+                     dict_region_code, dict_wz, literal_converter, wz_dict,
+                     hist_weather_year, gas_load_profile_parameters_dict,
+                     blp_branch_cts_power)
+import itertools
 logger = logging.getLogger(__name__)
-cfg = get_config()
 
 
-# --- Dimensionless data ------------------------------------------------------
+# %% Dimensionless data
 
 
 def elc_consumption_HH(by_HH_size=False, **kwargs):
@@ -50,6 +51,7 @@ def elc_consumption_HH(by_HH_size=False, **kwargs):
     -------
     float or pd.DataFrame
     """
+    cfg = kwargs.get('cfg', get_config())
     key = 'elc_cons_HH_by_size' if by_HH_size else 'elc_cons_HH_total'
     year = kwargs.get('year', cfg['base_year'])
     force_update = kwargs.get('force_update', False)
@@ -102,6 +104,7 @@ def heat_consumption_HH(by='households', **kwargs):
     -------
     pd.DataFrame
     """
+    cfg = kwargs.get('cfg', get_config())
     source = kwargs.get('source', cfg['heat_consumption_HH']['source'])
 
     if source == 'local':
@@ -127,6 +130,7 @@ def gas_consumption_HH(**kwargs):
     -------
     pd.DataFrame
     """
+    cfg = kwargs.get('cfg', get_config())
     id_to_application = {1: 'SpaceHeating',
                          2: 'HotWater',
                          3: 'Cooking'}
@@ -180,6 +184,7 @@ def t_allo(**kwargs):
     -------
     pd.DataFrame
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     # tbd in the future. hist weather year can be chosen via config.py
     # hist_year = kwargs.get('weather_year', hist_weather_year().get(year))
@@ -262,6 +267,7 @@ def generate_specific_consumption_per_branch(**kwargs):
     ------------
     Tuple that contains six pd.DataFrames
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     # get electricity and gas consumption from database
     x = True
@@ -274,13 +280,55 @@ def generate_specific_consumption_per_branch(**kwargs):
             x = False
         except ValueError:
             year1 -= 1
+    # convert internal ids to industry_id and energycarrier_id
     vb_wz = (vb_wz.assign(WZ=[x[0] for x in vb_wz['internal_id']],
                           ET=[x[1] for x in vb_wz['internal_id']]))
+    # Filter by 12 = gas, 18 = power
     vb_wz = (vb_wz[(vb_wz['ET'] == 12)
                    | (vb_wz['ET'] == 18)])[['value', 'WZ', 'ET']]
+    # convert internal_id[0] into WZ number
     vb_wz = vb_wz.loc[vb_wz['WZ']
                       .isin(list(wz_dict().keys()))]
     vb_wz = vb_wz.replace({'WZ': wz_dict()})
+    # create dataframe with tuples von (12,18) und (wz_dict.keys()) for testing
+    # if fetch from database was complete
+    ET = (12, 18)
+    WZ = wz_dict().values()
+    lists = [WZ, ET]
+    df_test = pd.DataFrame(list(itertools.product(*lists)),
+                           columns=['WZ', 'ET'])
+    vb_wz = pd.merge(vb_wz, df_test, how='right', left_on=['WZ', 'ET'],
+                     right_on=['WZ', 'ET']).drop_duplicates()  # .fillna(0)
+    # if there are any missing values, call same table from following year and
+    # replace the missing values
+    x = vb_wz.isnull().values.any()
+    year2 = year1+1
+
+    while (x):
+        logger.info('The following data was missing for the requested year: '
+                    + str(year1))
+        for i, row in vb_wz.loc[vb_wz['value'].isnull() == True].iterrows():
+            logger.info('WZ: '+str(row['WZ'])
+                        + ' and energy carrier: '+str(row['ET'])
+                        + ' with 18 = electricity and 12 = gas.')
+        vb_wz_2 = database_get('spatial', table_id=71, year=year2)
+        vb_wz_2 = (vb_wz_2.assign(WZ=[x[0] for x in vb_wz_2['internal_id']],
+                                  ET=[x[1] for x in vb_wz_2['internal_id']]))
+        vb_wz_2 = (vb_wz_2[(vb_wz_2['ET'] == 12)
+                   | (vb_wz_2['ET'] == 18)])[['value', 'WZ', 'ET']]
+        vb_wz_2 = vb_wz_2.loc[vb_wz_2['WZ']
+                              .isin(list(wz_dict().keys()))]
+        vb_wz_2 = vb_wz_2.replace({'WZ': wz_dict()})
+        vb_wz_2 = pd.merge(vb_wz_2, df_test, how='right', left_on=['WZ', 'ET'],
+                           right_on=['WZ', 'ET']).drop_duplicates()
+        vb_wz = vb_wz.fillna(vb_wz_2)
+        year2 += 1
+        x = vb_wz.isnull().values.any()
+        if not x:
+            logger.info('The values were replaced with data from year: '
+                        + str(year2))
+    # continue with procedure here: create DF for electricity and
+    # gas consumption
     vb_wz['value'] = vb_wz['value'] * 1000 / 3.6
     sv_wz_real = (vb_wz.loc[vb_wz['ET'] == 18][['WZ', 'value']]
                        .groupby(by='WZ')[['value']].sum()
@@ -288,8 +336,26 @@ def generate_specific_consumption_per_branch(**kwargs):
     gv_wz_real = (vb_wz.loc[vb_wz['ET'] == 12][['WZ', 'value']]
                        .groupby(by='WZ')[['value']].sum()
                        .rename(columns={'value': 'GV WZ [MWh]'}))
+    # manual correction of false data from database, data take from
+    # "Tabelle 2 - Umweltökonomische Gesamtrechnung 2019"
+    if(year == 2015):
+        sv_wz_real.loc['21'] = 1779722
+        sv_wz_real.loc['69-75'] = 15243888.88888889
+
+        gv_wz_real.loc['1'] = 2323170.37
+        gv_wz_real.loc['21'] = 4942035.13
+        gv_wz_real.loc['26'] = 2177598.10
+        gv_wz_real.loc['31-32'] = 981097.90
+        gv_wz_real.loc['43'] = 3208491.39
+        gv_wz_real.loc['55-56'] = 5114970.43
+        gv_wz_real.loc['85'] = 13023398.31
+
+    elif(year == 2016):
+        sv_wz_real.loc['21'] = 1759722
+        gv_wz_real.loc['20'] = 88759166.67
+
     # get number of employees (bze) from database
-    bze_je_lk_wz = pd.DataFrame(employees_per_branch_district(year=year1))
+    bze_je_lk_wz = pd.DataFrame(employees_per_branch(year=year1))
     bze_lk_wz = (pd.DataFrame(0.0, index=bze_je_lk_wz.columns,
                               columns=wz_dict().values()))
     # arrange employees DataFrame accordingly to energy consumption statistics
@@ -381,9 +447,9 @@ def generate_specific_consumption_per_branch(**kwargs):
     year1 = year
     while(x):
         try:
-            df_balance = pd.read_excel(data_in('dimensionless',
-                                               'bilanz'+str(year1)[-2:]+'d.xlsx'),
-                                       sheet_name='nat', skiprows=3, engine='openpyxl')
+            df_balance = pd.read_excel(
+                data_in('dimensionless', 'bilanz'+str(year1)[-2:]+'d.xlsx'),
+                sheet_name='nat', skiprows=3, engine='openpyxl')
             x = False
         except FileNotFoundError:
             year1 -= 1
@@ -451,9 +517,10 @@ def generate_specific_consumption_per_branch_and_district(iterations_power=8,
     ------------
     Tuple that contains two pd.DataFrames
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     [spez_sv, spez_gv, vb_wz, bze_je_lk_wz, df_f_sv_no_self_gen,
-     df_f_gv_no_self_gen] = (generate_specific_consumption_per_branch(year=year))
+     df_f_gv_no_self_gen] = generate_specific_consumption_per_branch(year=year)
     # get latest "Regionalstatistik" from Database
     x = True
     year1 = year
@@ -771,18 +838,20 @@ def generate_specific_consumption_per_branch_and_district(iterations_power=8,
 
     return spez_sv_lk.sort_index(axis=1), spez_gv_lk.sort_index(axis=1)
 
-# --- Spatial data ------------------------------------------------------------
+
+# %% Spatial data
 
 
 def population(**kwargs):
     """
-    Read, transform and return the number of residents per NUTS-3 area.
+    Return the number of residents per NUTS-3 area.
 
     Returns
     -------
     pd.Series
         index: NUTS-3 codes
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     source = kwargs.get('source', cfg['population']['source'])
     table_id = kwargs.get('table_id', cfg['population']['table_id'])
@@ -790,13 +859,10 @@ def population(**kwargs):
     force_update = kwargs.get('force_update', False)
 
     if source == 'local':
-        if year >= 2018:
-            logger.warn('open # TODO not yet working correctly!')
-            fn = data_in('regional', cfg['demographic_trend']['filename'])
-            df = read_local(fn, year=year)
-        else:
-            fn = data_in('regional', cfg['population']['filename'])
-            df = read_local(fn, year=year)
+        fn = data_in('regional', cfg['population']['filename'])
+        df = read_local(fn, year=year)
+        if len(df) == 0:
+            raise ValueError('The requested year is not in the database')
     elif source == 'database':
         if year >= 2018:
             # In this case take demographic trend data
@@ -827,14 +893,14 @@ def population(**kwargs):
 
 def elc_consumption_HH_spatial(**kwargs):
     """
-    Read, transform and return a pd.Series with pre-calculated
-    electricity consumption of households per NUTS-3 area.
+    Return pre-calculated electr. consumption of households per NUTS-3 area.
 
     Returns
     -------
-    pd.DataFrame
+    pd.Series
         index: NUTS-3 codes
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     source = kwargs.get('source', cfg['elc_cons_HH_spatial']['source'])
     table_id = kwargs.get('table_id', cfg['elc_cons_HH_spatial']['table_id'])
@@ -856,51 +922,61 @@ def elc_consumption_HH_spatial(**kwargs):
     return df
 
 
-def households_per_size(original=False, **kwargs):
+def households_per_size(scale_by_pop=False, **kwargs):
     """
-    Read, transform and return the numbers of households for each household
-    size per NUTS-3 area.
+    Return the numbers of households by household size per NUTS-3 area.
 
     Parameters
     ----------
-    orignal : bool, optional
+    scale_by_pop : bool, default False
         A flag if the results should be left untouched and returned in
-        original form for the year 2011 (True) or if they should be scaled to
-        the given `year` by the population in that year (False).
+        original form for the year 2011 (False) or if they should be scaled to
+        the given `year` by the population in that year (True).
 
     Returns
     -------
     pd.DataFrame
         index: NUTS-3 codes
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     source = kwargs.get('source', cfg['household_sizes']['source'])
     table_id = kwargs.get('table_id', cfg['household_sizes']['table_id'])
     force_update = kwargs.get('force_update', False)
+    raw = kwargs.get('raw', False)
 
     if source == 'local':
         fn = data_in('regional', cfg['household_sizes']['filename'])
         df = read_local(fn)
     elif source == 'database':
-        df = database_get('spatial', table_id=table_id, year=2011,
+        if table_id == 14:
+            year = 2011
+        df = database_get('spatial', table_id=table_id, year=year,
                           force_update=force_update)
+    elif source == 'values':
+        logger.info("Using VALUES")
+        fn = data_in('regional', cfg['household_sizes']['filename'])
+        df = read_local(fn, year=year, index_col=None)
     else:
         raise KeyError('Wrong source key given in config.yaml - must be either'
                        ' `local` or `database` but is: {}'.format(source))
+    if raw:
+        return df
 
-    df = (df.assign(internal_id=lambda x: x.internal_id.astype(str))
-            .assign(nuts3=lambda x: x.id_region.map(dict_region_code()),
-                    hh_size=lambda x: x.internal_id.str[1].astype(int))
+    df = (df.assign(nuts3=lambda x: x.id_region.map(dict_region_code()),
+                    hh_size=lambda x: x.internal_id.str[0].astype(int))
             .loc[lambda x: x.hh_size != 0]
             .pivot_table(values='value', index='nuts3', columns='hh_size',
                          aggfunc='sum'))
 
-    if original:
-        logger.warning('Orginal data is only available for the year 2011, so '
-                       'passing `original=True` argument disables any scaling '
-                       'and rounding to the given `year` based on the '
-                       'newer population data (which is enabled by default).')
-    else:
+    if scale_by_pop:
+        if table_id == 14 and year != 2011:
+            logger.info('Scaling household sizes by population data of passed '
+                        f'year {year}.')
+        else:
+            logger.warning(
+                'Scaling the household numbers by the population should only '
+                'be used if table_id=14 is used and the year is not 2011.')
         # Create the percentages of persons living in each household size
         df_ratio = (df * df.columns)
         df_ratio = df_ratio.divide(df_ratio.sum(axis=1), axis='index')
@@ -914,8 +990,7 @@ def households_per_size(original=False, **kwargs):
 
 def living_space(aggregate=True, **kwargs):
     """
-    Read, transform and return a DataFrame with the available living space
-    in [m²] for each building type per NUTS-3 area.
+    Return available living space [m²] for each building type per NUTS-3 area.
 
     Parameters
     ----------
@@ -964,6 +1039,7 @@ def living_space(aggregate=True, **kwargs):
                      2019: 'R_2019'}
 
     year = kwargs.get('year', 2018)
+    cfg = kwargs.get('cfg', get_config())
     source = kwargs.get('source', cfg['living_space']['source'])
     table_id = kwargs.get('table_id', cfg['living_space']['table_id'])
     force_update = kwargs.get('force_update', False)
@@ -1009,7 +1085,9 @@ def living_space(aggregate=True, **kwargs):
                             columns='building_type', aggfunc='sum')
         df = plausibility_check_nuts3(df)
     else:
-        df = df.drop(['id_spatial', 'id_region_type', 'id_region'], axis=1)
+        df = df.drop(['id_spatial', 'id_region_type', 'id_region',
+                      'internal_id_1', 'internal_id_2', 'internal_id_3',
+                      'internal_id_4', 'internal_id_5'], axis=1)
     return df
 
 
@@ -1028,6 +1106,7 @@ def percentage_EFH_MFH(MFH=False, **kwargs):
     -------
     pd.Series
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', 2011)
     source = kwargs.get('source', cfg['percentage_EFH_MFH']['source'])
     table_id = kwargs.get('table_id', cfg['percentage_EFH_MFH']['table_id'])
@@ -1064,6 +1143,7 @@ def income(**kwargs):
     pd.Series
         index: NUTS-3 codes
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     source = kwargs.get('source', cfg['income']['source'])
     table_id = kwargs.get('table_id', cfg['income']['table_id'])
@@ -1134,6 +1214,7 @@ def energy_balance_values(**kwargs):
     pd.Series
         index: NUTS-1 codes
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     source = kwargs.get('source', cfg['energy_balance_values']['source'])
     table_id = kwargs.get('table_id', cfg['energy_balance_values']['table_id'])
@@ -1182,10 +1263,12 @@ def stove_assumptions(**kwargs):
     -------
     pd.DataFrame
     """
+    cfg = kwargs.get('cfg', get_config())
     source = kwargs.get('source', cfg['stove_assumptions']['source'])
+
     if source == 'local':
         df = (pd.read_csv(data_in('regional',
-                                   cfg['stove_assumptions']['filename']),
+                                  cfg['stove_assumptions']['filename']),
                           index_col='natcode_nuts1', encoding='utf-8')
                 .drop(labels='name_nuts1', axis=1))
     elif source == 'database':
@@ -1204,10 +1287,12 @@ def hotwater_shares(**kwargs):
     -------
     pd.DataFrame
     """
+    cfg = kwargs.get('cfg', get_config())
     source = kwargs.get('source', cfg['hotwater_shares']['source'])
+
     if source == 'local':
         df = (pd.read_csv(data_in('regional',
-                                   cfg['hotwater_shares']['filename']),
+                                  cfg['hotwater_shares']['filename']),
                           index_col='natcode_nuts1', encoding='utf-8')
                 .drop(labels='name_nuts1', axis=1))
     elif source == 'database':
@@ -1229,7 +1314,7 @@ def heat_demand_buildings(**kwargs):
     bt_to_type = {1: '1FH',  # 1-family-house
                   2: 'TH',   # Terraced house
                   3: 'MFH',  # multi-family-house (3-6)
-                  4: 'BB'}   # building block
+                  4: 'MSB'}  # multi-storey-building
     hp_to_name = {1: 'net heat demand',
                   2: 'hot water (final energy)',
                   3: 'space heating',
@@ -1254,6 +1339,7 @@ def heat_demand_buildings(**kwargs):
                      2: 'Modernisation conventional',
                      3: 'Modernisation future'}
 
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', 2014)
     source = kwargs.get('source', cfg['heat_dem_bld']['source'])
     table_id = kwargs.get('table_id', cfg['heat_dem_bld']['table_id'])
@@ -1278,7 +1364,8 @@ def heat_demand_buildings(**kwargs):
                     heat_parameter=lambda x: x.internal_id.str[2],
                     variant=lambda x: x.internal_id.str[3])
           .drop(columns=['year', 'internal_id', 'id_spatial', 'id_region_type',
-                         'id_region'])
+                         'id_region', 'internal_id_1', 'internal_id_2',
+                         'internal_id_3', 'internal_id_4', 'internal_id_5'])
           .dropna(subset=['nuts3'])
           .loc[lambda x: ~(x.nuts3.isin(['DE915', 'DE919']))])
     # Filter by possibly given internal_id
@@ -1312,11 +1399,13 @@ def efficiency_enhancement(source, **kwargs):
     ----------
     source : str
         must be one of ['power', 'gas']
+
     Returns
     -------
     pd.Series
         index: Branches
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     if year in range(2019, 2036):
         # if year is in the future, function returns a df with calculated
@@ -1350,11 +1439,33 @@ def efficiency_enhancement(source, **kwargs):
         return df
 
 
-def employees_per_branch_district(**kwargs):
+def get_WZ_for_sector(sector):
     """
-    Read, transform and return the number of employees per NUTS-3 area
-    and branch.
+    Return a list of WZ codes corresponding to gHD or industrial sector
+    Parameter
+    ---------
+    sector : str
+        'Industrie' or 'GHD'
+
+    Returns
+    -------
+    list of WZ codes
+
+    """
+    df = dict_wz(raw=True)
+    return df.loc[lambda x: x['Sektor'] == sector]['WZ'].to_list()
+
+
+def employees_per_branch(region_code='ags_lk', **kwargs):
+    """
+    Return the number of employees per NUTS-3 area and branch.
+
     The variable 'scenario' is used only as of 2019!
+
+    Parameter
+    ---------
+    region_code : str
+        The used region code as defined in config.dict_region_code()
 
     Returns
     -------
@@ -1362,36 +1473,51 @@ def employees_per_branch_district(**kwargs):
         index: Branches
         columns: District keys (Landkreisschlüssel)
     """
-
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
-    scenario = kwargs.get('scenario', cfg['scenario'])
+    scenario = kwargs.get('scenario', cfg['employees']['scenario'])
+    assert scenario in ['Basis', 'Digital', 'Predefined', 'Direct']
 
-    if year in range(2000, 2008):
-        df = database_get('spatial', table_id=18, year=2008)
-        df = (df.assign(ags=[int(x[:-3]) for x in
-                             df['id_region'].astype(str)],
-                        WZ=[x[1] for x in df['internal_id']]))
-        bool_list = np.array(df['id_region'].astype(str))
-        for i in range(0, len(df)):
-            bool_list[i] = (df['internal_id'][i][0] == 9)
-        df = (df[((bool_list) & (df['WZ'] > 0))][['ags', 'value', 'WZ']]
-              .rename(columns={'value': 'BZE'}))
-        df = (pd.pivot_table(df, values='BZE', index='WZ',
-                             columns='ags', fill_value=0, dropna=False))
-        print("number of employees was taken from 2008, as there is no earlier\
-               data available")
-    elif year in range(2008, 2018):
-        df = database_get('spatial', table_id=18, year=year)
-        df = (df.assign(ags=[int(x[:-3]) for x in
-                             df['id_region'].astype(str)],
-                        WZ=[x[1] for x in df['internal_id']]))
-        bool_list = np.array(df['id_region'].astype(str))
-        for i in range(0, len(df)):
-            bool_list[i] = (df['internal_id'][i][0] == 9)
-        df = (df[((bool_list) & (df['WZ'] > 0))][['ags', 'value', 'WZ']]
-              .rename(columns={'value': 'BZE'}))
-        df = (pd.pivot_table(df, values='BZE', index='WZ',
-                             columns='ags', fill_value=0, dropna=False))
+    if scenario == 'Predefined':
+        fn = data_in('regional', cfg['employees']['filename'])
+        df = (read_local(fn, year=year)
+              .drop(['typ', 'einheit', 'id_region_type', 'internal_id_type'],
+                    axis=1)
+              .assign(internal_id=lambda x: x.internal_id.str[0])
+              .assign(WZ=lambda x: x.internal_id.map(
+                  dict_wz(keys='internal_id', values='WZ')))
+              .assign(region_code=lambda x: x.id_region.map(
+                  dict_region_code(keys='id_region', values=region_code)))
+              .pivot_table(values='value', index='region_code', fill_value=0,
+                           columns='WZ', dropna=False))
+        return df
+    elif scenario == 'Direct':
+        fn = data_in('regional', cfg['employees']['filename'])
+        df = pd.read_csv(fn, index_col=0, engine='c')
+        # 'XX' is sometimes used for statistical differences -> not a real WZ.
+        if 'XX' in df:
+            df = df.drop('XX', axis=1)
+        cols = [int(c) for c in df.columns]
+        df.columns = cols
+        return df
+
+    if year in range(2000, 2018):
+        if year < 2008:
+            logger.warning("Number of employees was taken from 2008, "
+                           "as there is no earlier data available!")
+            yr = 2008
+        else:
+            yr = year
+
+        df = database_get('spatial', table_id=18, year=yr)
+        df = (df.assign(region_code=lambda x:
+                        x.id_region.map(dict_region_code(keys='id_region',
+                                                         values=region_code)),
+                        WZ=[x[1] for x in df['internal_id']])
+                .loc[lambda x: x.internal_id.str[0] == 9]
+                .loc[lambda x: x.WZ > 0])
+        df = (pd.pivot_table(df, values='value', index='WZ', fill_value=0,
+                             columns='region_code', dropna=False))
     elif year in range(2018, 2036):
         if scenario == 'Basis':
             df = database_get('spatial', table_id=27, year=year)
@@ -1400,17 +1526,96 @@ def employees_per_branch_district(**kwargs):
         else:
             raise ValueError("`scenario` must be in ['Basis', 'Digital']")
 
-        df = (df.assign(ags=[int(x[:-3]) for x in
-                             df['id_region'].astype(str)],
-                        WZ=[x[0] for x in df['internal_id']]))
-        df = (pd.pivot_table(df, values='value', index='WZ',
-                             columns='ags', fill_value=0, dropna=False))
+        df = (df.assign(region_code=lambda x:
+                        x.id_region.map(dict_region_code(keys='id_region',
+                                                         values=region_code)),
+                        WZ=[x[0] for x in df['internal_id']])
+                .pivot_table(values='value', index='WZ', fill_value=0,
+                             columns='region_code', dropna=False))
     else:
         raise ValueError("`year` must be between 2000 and 2035")
 
     return df
 
-# --- Temporal data -----------------------------------------------------------
+
+def gas_grid(H2=False):
+    """
+    Return table showing when a grid will exist for whih carrier and region.
+
+    Caveat: This dataset has been collected manually and will not be shipped
+    with disaggregator.
+
+    Parameters
+    ----------
+    H2 : bool
+        If True it refers to the future hydrogen backbone. Else: Gas grid.
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    sheet_name = 'H2' if H2 else 'CH4'
+    return pd.read_excel(data_in('regional', 'supply', 'gasgrid.xlsx'),
+                         index_col='nuts3', sheet_name=sheet_name)
+
+
+def grid_operator(carrier, level, name=None):
+    """
+    Return a table showing when the grid for which carrier is in which region.
+
+    Caveat: This dataset has been collected manually and will not be shipped
+    with disaggregator.
+
+    Parameters
+    ----------
+    carrier : str
+        Must be in ['gas', 'h2', 'power']
+    level : str:
+        Must be in ['tso', 'dso']
+    name : str
+        Filter by specific operator name
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    assert carrier in ['gas', 'h2', 'power']
+    assert level in ['tso', 'dso']
+    sheet_name = f'{level}_{carrier}'
+    df = (pd.read_excel(data_in('regional', 'values', 'operators_nuts3.xlsx'),
+                        index_col='nuts3', sheet_name=sheet_name)
+            .drop(['ags', 'name_short'], axis=1)
+            .sort_index(axis=1))
+    if name is None:
+        return df
+    else:
+        return df[name]
+
+
+def vehicle_count(year, technology):
+    available_years = [2018, 2019, 2020, 2021]
+    assert year in available_years, (
+        f"Data for year {year} is not available. Please choose a year "
+        f"from the following: {available_years}")
+
+    # Read in dataset based on provided year
+    logger.warn("In these datasets, data for the city 'Trier' might be wrong "
+                "and data for district 'Trier-Saarburg' is non-existent.")
+    car_df = (pd.read_excel(data_in('regional',
+                                    'Cars_bytechnology_byyear.xlsx'),
+                            sheet_name=str(year), header=0)
+                .set_index('nuts3')  # index -> nuts3 classification
+                .drop(["Land", "Statistische Kennziffer und Zulassungsbezirk"],
+                      axis=1))  # Drop unnecessary columns
+
+    techs = car_df.columns
+    assert technology in techs, (
+        f"The technology you chose does not exist in the dataset. Please "
+        f"choose one of the following technologies: {techs}")
+    return car_df[technology]
+
+
+# %% Temporal data
 
 
 def elc_consumption_HH_temporal(**kwargs):
@@ -1423,6 +1628,7 @@ def elc_consumption_HH_temporal(**kwargs):
     pd.Series
         index: pd.DatetimeIndex
     """
+    cfg = kwargs.get('cfg', get_config())
     return (reshape_temporal(freq='1H', key='elc_cons_HH_temporal', **kwargs)
             * elc_consumption_HH(year=kwargs.get('year', cfg['base_year'])))
 
@@ -1437,6 +1643,7 @@ def reshape_temporal(freq=None, key=None, **kwargs):
     pd.Series
         index: pd.DatetimeIndex
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     source = kwargs.get('source', cfg[key]['source'])
     table_id = kwargs.get('table_id', cfg[key]['table_id'])
@@ -1449,8 +1656,6 @@ def reshape_temporal(freq=None, key=None, **kwargs):
 
     if source == 'local':
         raise NotImplementedError('Not here yet!')
-#        fn = _data_in('temporal', cfg[key]['filename'])
-#        df = read_local(fn, year=year)
     elif source == 'database':
         values = literal_converter(
             database_get('temporal', table_id=table_id, year=year,
@@ -1463,7 +1668,7 @@ def reshape_temporal(freq=None, key=None, **kwargs):
     return df_exp
 
 
-# --- Spatiotemporal data -----------------------------------------------------
+# %% Spatiotemporal data
 
 
 def standard_load_profile_elc(which='H0', freq='1H', **kwargs):
@@ -1518,7 +1723,7 @@ def zve_load_profile_elc(region='AllRegions', year=2015, **kwargs):
                        infer_datetime_format=True, engine='c')
 
 
-def shift_load_profile_generator(state, low=0.35, **kwargs):
+def shift_load_profile_generator(state, low=0.4, **kwargs):
     """
     Return shift load profiles in normalized units
     ('normalized' means that the sum over all time steps equals to one).
@@ -1526,8 +1731,8 @@ def shift_load_profile_generator(state, low=0.35, **kwargs):
     Parameters
     ----------
     state : str
-        Must be one of ['BW','BY','BE','BB','HB','HH','HE','MV',
-                        'NI','NW','RP','SL','SN','ST','SH','TH']
+        Must be one of ['BW', 'BY', 'BE', 'BB', 'HB', 'HH', 'HE', 'MV',
+                        'NI', 'NW', 'RP', 'SL', 'SN', 'ST', 'SH', 'TH']
     low : float
         Load level during "low" loads. Industry loads have two levels:
             "low" outside of working hours and "high" during working hours.
@@ -1537,6 +1742,7 @@ def shift_load_profile_generator(state, low=0.35, **kwargs):
     -------
     pd.DataFrame
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     validity_check_nuts1(state)
     idx = pd.date_range(start=str(year), end=str(year+1), freq='15T')[:-1]
@@ -1677,6 +1883,7 @@ def gas_slp_weekday_params(state, **kwargs):
     -------
     pd.DataFrame
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     validity_check_nuts1(state)
 
@@ -1742,6 +1949,7 @@ def CTS_power_slp_generator(state, **kwargs):
         v = pd.merge(df, u[['Date', Tag_Zeit]], on=['Date'], how='left')
         return v.fillna(0)[Tag_Zeit]
 
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     validity_check_nuts1(state)
     idx = pd.date_range(start=str(year), end=str(year+1), freq='15T')[:-1]
@@ -1834,6 +2042,68 @@ def elc_consumption_HH_spatiotemporal(**kwargs):
     return reshape_spatiotemporal(key='elc_cons_HH_spatiotemporal', **kwargs)
 
 
+def regional_branch_load_profiles(**kwargs):
+    """
+    Return regional load profile per NUTS-3-region, time step and industry
+    branch.
+    """
+    return reshape_load_profiles(key='regional_load_profiles', **kwargs)
+
+
+def reshape_load_profiles(freq=None, key=None, **kwargs):
+    """
+    Query spatiotemporal data and shape into a pd.DataFrame.
+
+    Returns
+    -------
+    pd.DataFrame
+        index:      time step
+        columns:    NUTS-3 codes
+    """
+    cfg = kwargs.get('cfg', get_config())
+    year = kwargs.get('year', cfg['base_year'])
+    source = kwargs.get('source', cfg[key]['source'])
+    # region = kwargs.get('region', cfg[key]['region'])
+    region = kwargs.get('region', None)
+    # wz = kwargs.get('wz', cfg[key]['wz'])
+    wz = kwargs.get('wz', None)
+    value_type = kwargs.get('type', cfg[key]['type'])
+    force_update = kwargs.get('force_update', False)
+
+    if freq is None:
+        if key is None:
+            raise ValueError('You must pass either `freq` or `key`!')
+        else:
+            freq = cfg[key]['freq']
+
+    if source == 'local':
+        raise NotImplementedError('Not here yet!')
+    elif source == 'database':
+        df = (database_get_load_profiles('regional_load_profiles', year=year,
+                                         region_id=region, wz_id=wz,
+                                         type_id=value_type,
+                                         force_update=force_update)
+              .assign(nuts3=lambda x: (x.region*1000).map(dict_region_code()))
+              .loc[lambda x: (~(x.nuts3.isna()))]
+              .set_index('region').sort_index(axis=0)
+              .loc[:, 'values']
+              .apply(literal_converter))
+
+        # Idea for later implementation
+        # if region is not None:
+        #     df = df.set_index('region').sort_index(axis=0)
+        # else:
+        #     df = df.set_index('wz').sort_index(axis=0)
+
+        df_exp = (pd.DataFrame(df.values.tolist(), index=df.index)
+                    .astype(float))
+    else:
+        raise KeyError('Wrong source key given in config.yaml - must be either'
+                       ' `local` or `database` but is: {}'.format(source))
+
+    return df_exp.pipe(transpose_spatiotemporal, year=year, freq=freq)
+
+
 def reshape_spatiotemporal(freq=None, key=None, **kwargs):
     """
     Query spatiotemporal data and shape into a 2-dimensional pd.DataFrame.
@@ -1844,6 +2114,7 @@ def reshape_spatiotemporal(freq=None, key=None, **kwargs):
         index:      time step
         columns:    NUTS-3 codes
     """
+    cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     source = kwargs.get('source', cfg[key]['source'])
     table_id = kwargs.get('table_id', cfg[key]['table_id'])
@@ -1877,7 +2148,7 @@ def reshape_spatiotemporal(freq=None, key=None, **kwargs):
     return df_exp.pipe(transpose_spatiotemporal, year=year, freq=freq)
 
 
-# --- Utility functions -------------------------------------------------------
+# %% Utility functions
 
 
 def database_description(dimension='spatial', short=True, only_active=True,
@@ -1921,7 +2192,63 @@ def database_description(dimension='spatial', short=True, only_active=True,
     return df.set_index(id_name).sort_index()
 
 
-def database_get(dimension, table_id, internal_id=None, year=None,
+def database_get_load_profiles(dimension, year=None, region_id=None,
+                               type_id=None, wz_id=None,
+                               allow_zero_negative=None,
+                               force_update=False, **kwargs):
+    """
+    Get normalized load profiles from the demandregio database.
+
+    Parameters
+    ----------
+    dimension : str
+        'regional_load_profiles'.
+    year : int or str, optional
+        Either the data year (spatial) or weather year (temporal)
+    region_id : str
+        region id from german id system
+    force_update : bool, default False
+        If True, perform a fresh database query and overwrite data in cache.
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    if dimension in ['regional_load_profiles']:
+        table = 'demandregio_regional_load_profiles'
+    else:
+        raise ValueError("``which'' must be either 'spatial' or 'temporal' but"
+                         "given was: {}".format(dimension))
+
+    if not isinstance(allow_zero_negative, bool):
+        allow_zero_negative = True if dimension == 'temporal' else False
+    # Go through each variable and append to query str if needed.
+    query = table + '?'  # + 'region' + '=eq.' + str(region_id)
+
+    if year is not None:
+        if year not in range(2009, 2020):
+            raise ValueError("`year` must be between 2009 and 2019")
+        year_var = 'year'
+        query += '&' + year_var + '=eq.' + str(year)
+
+    if region_id is not None:
+        region_var = 'region'
+        region_id = str(region_id).zfill(5)
+        query += '&' + region_var + '=eq.' + str(region_id)
+
+    if wz_id is not None:
+        wz_var = 'wz'
+        wz_id = blp_branch_cts_power()[wz_id]
+        query += '&' + wz_var + '=eq.' + str(wz_id)
+
+    if type_id is not None:
+        type_var = 'type'
+        query += '&' + type_var + '=eq.' + str(type_id)
+
+    return database_raw(query, force_update=force_update)
+
+
+def database_get(dimension, table_id=None, internal_id=None, year=None,
                  allow_zero_negative=None, force_update=False, **kwargs):
     """
     Get data from the demandregio database.
@@ -1945,6 +2272,8 @@ def database_get(dimension, table_id, internal_id=None, year=None,
     -------
     pd.DataFrame
     """
+    cfg = kwargs.get('cfg', get_config())
+
     if dimension in ['spatial', 'temporal']:
         id_name = 'id_' + dimension
         if dimension == 'spatial':
@@ -2013,7 +2342,7 @@ def database_shapes():
                       '16-12-31%27&&select=id_ags,gen,geom_as_text,fl_km2')
     geom = [wkt.loads(mp_str) for mp_str in df.geom_as_text]
     return (gpd.GeoDataFrame(df.drop('geom_as_text', axis=1),
-                             crs={'init': 'epsg:25832'}, geometry=geom)
+                             crs='EPSG:25832', geometry=geom)
                .assign(nuts3=lambda x: x.id_ags.map(dict_region_code()))
                .set_index('nuts3').sort_index(axis=0))
 
@@ -2061,6 +2390,8 @@ def plausibility_check_nuts3(df, check_zero=True):
         logger.info('Merging old Göttingen+Osterode to new NUTS-v2016 region.')
         df.loc['DE91C'] = df.loc[nuts_2013].sum()
         df = df[~(df.index.isin(nuts_2013))]
+    if not (df.index.isin(nuts_2013 + ['DE91C']).any()):
+        logger.warning('Both old+new Göttingen+Osterode regions are missing.')
     # 3. Check if values below zero
     if isinstance(df, pd.Series):
         if check_zero and df.loc[lambda x: x <= 0.0].any():
@@ -2074,9 +2405,10 @@ def plausibility_check_nuts3(df, check_zero=True):
     return df
 
 
-def read_local(file, internal_id=None, year=None):
-    df = pd.read_csv(file, index_col='idx', encoding='utf-8', engine='c',
+def read_local(file, index_col=False, internal_id=None, year=None):
+    df = pd.read_csv(file, index_col=index_col, encoding='utf-8', engine='c',
                      converters={'internal_id': literal_converter,
+                                 'internal_id_type': literal_converter,
                                  'region_types': literal_converter,
                                  'values': literal_converter,
                                  'years': literal_converter,
@@ -2134,6 +2466,7 @@ def transpose_spatiotemporal(df, freq='1H', **kwargs):
     -------
     pd.DataFrame
     """
+    cfg = kwargs.get('cfg', get_config())
     if isinstance(df.index, pd.DatetimeIndex):
         # put timesteps in columns and regions in index
         return df.reset_index(drop=True).T
