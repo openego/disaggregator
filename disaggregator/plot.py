@@ -33,7 +33,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from .config import get_config, data_in
 from .data import database_shapes, transpose_spatiotemporal
 logger = logging.getLogger(__name__)
-locale.setlocale(locale.LC_ALL, 'de')
+locale.setlocale(locale.LC_ALL, 'de_DE.utf8')
 plt.rcParams['axes.formatter.use_locale'] = True
 ScaMap = plt.cm.ScalarMappable
 
