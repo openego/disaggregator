@@ -760,14 +760,15 @@ def disagg_temporal_power_housholds_slp(use_nuts3code=False,
     sv_yearly = ((disagg_households_power(by=by,
                                           weight_by_income=weight_by_income,
                                           year=year)
-                  * 1e3)
+                  * 1e3).sum(axis=1)
                  .rename(index=dict_region_code(keys='natcode_nuts3',
                                                 values='ags_lk'))
                  .to_frame()
+                 .rename(columns={0:"value"})
                  .assign(BL=lambda x: [bl_dict().get(int(i[: -3]))
                                        for i in x.index.astype(str)]))
 
-    total_sum = sv_yearly.value.sum()
+    total_sum = sv_yearly.drop('BL', axis=1).sum().sum()
 
     # Create empty 15min-index'ed DataFrame for target year
     idx = pd.date_range(start=str(year), end=str(year+1), freq='15T')[:-1]
