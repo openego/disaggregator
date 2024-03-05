@@ -47,7 +47,7 @@ def data_in(*fn):
     return os.path.join(os.path.dirname(__file__), 'data_in', *fn)
 
 
-def get_config(filename=None, use_ruamel=True, **kwargs):
+def get_config(filename=None, use_ruamel=False, **kwargs):
     """
     Read the config.yaml file from input folder.
     """
