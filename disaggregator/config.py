@@ -106,12 +106,21 @@ def database_raw(query, force_update=False):
         raise ValueError('`query` must be a string.')
     sha1 = hashlib.sha1(query.encode()).hexdigest()
 
+    cache_dir = os.path.join(
+        os.getcwd(),
+        'demandregio-disaggregator',
+        'disaggregator',
+        'disaggregator',
+        'data_in',
+        '__cache__/'
+        )
+
     # Check if caching directory exists and create if not.
-    if not os.path.isdir(data_in('__cache__/')):
-        os.mkdir(data_in('__cache__/'))
+    if not os.path.isdir(cache_dir):
+        os.mkdir(cache_dir)
 
     # If file has already been cached, read cache, else query from API + save.
-    filename = data_in('__cache__/{}.csv'.format(sha1))
+    filename = os.path.join(cache_dir, '{}.csv'.format(sha1))
     if os.path.exists(filename) and (force_update is False):
         return pd.read_csv(filename, index_col='idx', encoding='utf-8',
                            engine='c',
