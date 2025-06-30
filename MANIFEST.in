@@ -8,3 +8,5 @@ include disaggregator/data_in/regional/*.csv
 include disaggregator/data_in/regional/*.xlsx
 include disaggregator/data_in/temporal/*.csv
 include disaggregator/data_in/temporal/*.xlsx
+include disaggregator/data_in/temporal/power_load_profiles/*.xlsx
+include disaggregator/data_in/temporal/gas_load_profiles/*.xls

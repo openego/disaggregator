@@ -432,7 +432,8 @@ def generate_specific_consumption_per_branch(**kwargs):
     # use factor from sheet to decompose energy consumption
     f = ('Decomposition Factors Industrial Energy Demand.xlsx')
     df_decom = pd.read_excel(data_in('dimensionless', f),
-                               sheet_name='Tabelle1', engine='openpyxl')
+                             sheet_name='Tabelle1',
+                             engine='openpyxl')
     df_decom.set_index('WZ', inplace=True)
     df_decom = spez_gv.merge(df_decom, how='left',
                              left_index=True, right_index=True)
@@ -449,7 +450,9 @@ def generate_specific_consumption_per_branch(**kwargs):
         try:
             df_balance = pd.read_excel(
                 data_in('dimensionless', 'bilanz'+str(year1)[-2:]+'d.xlsx'),
-                sheet_name='nat', skiprows=3, engine='openpyxl')
+                sheet_name='nat',
+                skiprows=3,
+                engine='openpyxl')
             x = False
         except FileNotFoundError:
             year1 -= 1
@@ -949,9 +952,7 @@ def households_per_size(scale_by_pop=False, **kwargs):
         fn = data_in('regional', cfg['household_sizes']['filename'])
         df = read_local(fn)
     elif source == 'database':
-        if table_id == 14:
-            year = 2011
-        df = database_get('spatial', table_id=table_id, year=year,
+        df = database_get('spatial', table_id=table_id, year=2011,
                           force_update=force_update)
     elif source == 'values':
         logger.info("Using VALUES")
@@ -1556,7 +1557,9 @@ def gas_grid(H2=False):
     """
     sheet_name = 'H2' if H2 else 'CH4'
     return pd.read_excel(data_in('regional', 'supply', 'gasgrid.xlsx'),
-                         index_col='nuts3', sheet_name=sheet_name)
+                         index_col='nuts3',
+                         sheet_name=sheet_name,
+                         engine='openpyxl')
 
 
 def grid_operator(carrier, level, name=None):
@@ -1583,7 +1586,9 @@ def grid_operator(carrier, level, name=None):
     assert level in ['tso', 'dso']
     sheet_name = f'{level}_{carrier}'
     df = (pd.read_excel(data_in('regional', 'values', 'operators_nuts3.xlsx'),
-                        index_col='nuts3', sheet_name=sheet_name)
+                        index_col='nuts3',
+                        sheet_name=sheet_name,
+                        engine='openpyxl')
             .drop(['ags', 'name_short'], axis=1)
             .sort_index(axis=1))
     if name is None:
@@ -1603,7 +1608,9 @@ def vehicle_count(year, technology):
                 "and data for district 'Trier-Saarburg' is non-existent.")
     car_df = (pd.read_excel(data_in('regional',
                                     'Cars_bytechnology_byyear.xlsx'),
-                            sheet_name=str(year), header=0)
+                            sheet_name=str(year),
+                            header=0,
+                            engine='openpyxl')
                 .set_index('nuts3')  # index -> nuts3 classification
                 .drop(["Land", "Statistische Kennziffer und Zulassungsbezirk"],
                       axis=1))  # Drop unnecessary columns
@@ -1989,7 +1996,7 @@ def CTS_power_slp_generator(state, **kwargs):
     for profile in ['H0', 'L0', 'L1', 'L2', 'G0', 'G1', 'G2', 'G3', 'G4',
                     'G5', 'G6']:
         f = '39_VDEW_Strom_Repräsentative Profile_{}.xlsx'.format(profile)
-        df_load = pd.read_excel(data_in('temporal', 'Power Load Profiles', f),
+        df_load = pd.read_excel(data_in('temporal', 'power_load_profiles', f),
                                 engine='openpyxl').iloc[:, 0:10]
         df_load.columns = ['Hour', 'SA_WIZ', 'SU_WIZ', 'WD_WIZ', 'SA_SOZ',
                            'SU_SOZ', 'WD_SOZ', 'SA_UEZ', 'SU_UEZ', 'WD_UEZ']

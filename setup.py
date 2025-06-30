@@ -1,3 +1,5 @@
+# Manually added setup file not shipped in the original version
+
 import os
 from setuptools import find_packages, setup
 
@@ -16,7 +18,8 @@ setup(
                       'xlrd',
                       'matplotlib',
                       'holidays',
-                      'openpyxl'],
+                      'openpyxl==3.1.0',
+                      'ruamel.yaml<0.18.0'],
     package_data={
         "": ["*.csv", "*.xlsx"]}
 )

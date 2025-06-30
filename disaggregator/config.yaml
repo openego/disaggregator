@@ -1,6 +1,6 @@
 # --- General settings ---
 base_year: 2015
-database_host: "http://opendata.ffe.de:4000/"
+database_host: "https://api.opendata.ffe.de/demandregio/"
 dict_source: database
 # Set the maximum number of cpu threads to be used. Logic:
 #   If max_cpu_count exceeds the number of available threads OR
@@ -167,7 +167,7 @@ regional_load_profiles:
     
 # --- Variable Type Configuration ---
 dtypes:
-    ags_lk: str
+    ags_lk: int
     id: int
     id_temporal: int
     id_spatial: int

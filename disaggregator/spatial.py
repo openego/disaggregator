@@ -132,7 +132,7 @@ def disagg_households_power(by, weight_by_income=False, scale_by_pop=False,
     if by == 'households':
         # Bottom-Up: Power demand by household sizes in [GWh/a]
         power_per_HH = elc_consumption_HH(by_HH_size=True, year=year) / 1e3
-        df = (households_per_size(original=scale_by_pop, year=year)
+        df = (households_per_size(scale_by_pop=scale_by_pop, year=year)
               * power_per_HH)
     elif by == 'population':
         # Top-Down: Power demand for entire country in [GWh/a]

@@ -24,15 +24,14 @@ import requests
 import pandas as pd
 import logging
 import hashlib
-from io import BytesIO
 from ast import literal_eval as lit_eval
+from io import BytesIO
 logger = logging.getLogger(__name__)
 
 
 def data_out(*fn, force_dir=True):
-    dirpath = os.path.join(os.path.dirname(__file__), '..', 'data_out')
+    dirpath = os.path.join(os.path.dirname(__file__), 'data_out')
     # Always make data_out directory if non-existent
-
     if not os.path.isdir(dirpath):
         os.mkdir(dirpath)
     full_path = os.path.join(dirpath, *fn)
@@ -47,13 +46,13 @@ def data_in(*fn):
     return os.path.join(os.path.dirname(__file__), 'data_in', *fn)
 
 
-def get_config(filename=None, use_ruamel=False, **kwargs):
+def get_config(filename=None, use_ruamel=True, **kwargs):
     """
     Read the config.yaml file from input folder.
     """
     if use_ruamel:
         # This one supports YAML Spec 1.2 w/o the problems mentioned below.
-        import ruamel_yaml
+        from ruamel import yaml as ruamel_yaml
     else:
         # Warning: As of 11/2020 PyYAML only supports YAML Spec 1.1, which can
         # cause problems as many expressions (e.g. N) are interpreted as bool.
@@ -250,7 +249,9 @@ def dict_wz(keys='WZ', values='Minititel', raw=False):
         https://www.klassifikationsserver.de/klassService/jsp/variant/variantInfo.jsf
     """
     df = pd.read_excel(data_in('dimensionless', 'WZ_2008.xlsx'),
-                       sheet_name='Nur_WZ', index_col=None)
+                       sheet_name='Nur_WZ',
+                       index_col=None,
+                       engine='openpyxl')
     assert keys in df.columns, "`keys` must be a valid column header!"
     assert values in df.columns, "`values` must be a valid column header!"
 
@@ -281,11 +282,11 @@ def hist_weather_year():
     """
     return {2000: 2000, 2001: 2001, 2002: 2002, 2003: 2003, 2004: 2004,
             2005: 2005, 2006: 2006, 2007: 2007, 2008: 2008, 2009: 2009,
-            2010: 2010, 2011: 2011, 2012: 2012, 2013: 2013, 2014: 2014,
-            2015: 2015, 2016: 2016, 2017: 2017, 2018: 2018, 2019: 2007,
-            2020: 2008, 2021: 2009, 2022: 2010, 2023: 2011, 2024: 2012,
-            2025: 2013, 2026: 2014, 2027: 2015, 2028: 2016, 2029: 2017,
-            2030: 2018, 2031: 2007, 2032: 2008, 2033: 2009, 2034: 2010,
+            2010: 2010, 2011: 2011, 2012: 2011, 2013: 2011, 2014: 2011,
+            2015: 2011, 2016: 2011, 2017: 2011, 2018: 2011, 2019: 2011,
+            2020: 2011, 2021: 2011, 2022: 2011, 2023: 2011, 2024: 2011,
+            2025: 2011, 2026: 2011, 2027: 2011, 2028: 2011, 2029: 2011,
+            2030: 2011, 2031: 2011, 2032: 2011, 2033: 2011, 2034: 2011,
             2035: 2011}
 
 

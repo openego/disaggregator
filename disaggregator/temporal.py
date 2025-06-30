@@ -648,7 +648,7 @@ def disagg_temporal_power_CTS(detailed=False, use_nuts3code=False, **kwargs):
     cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
     # Obtain yearly power consumption per WZ per LK
-    sv_yearly = (disagg_CTS_industry('power', 'CTS')
+    sv_yearly = (disagg_CTS_industry('power', 'CTS', year=year)
                  .transpose()
                  .assign(BL=lambda x: [bl_dict().get(int(i[: -3]))
                                        for i in x.index.astype(str)]))
@@ -756,19 +756,26 @@ def disagg_temporal_power_housholds_slp(use_nuts3code=False,
     """
     cfg = kwargs.get('cfg', get_config())
     year = kwargs.get('year', cfg['base_year'])
-    # Obtain yearly power consumption per per district
+    scale_by_pop = kwargs.get('scale_by_pop', False)
+    # Obtain yearly power consumption per district
     sv_yearly = ((disagg_households_power(by=by,
                                           weight_by_income=weight_by_income,
-                                          year=year)
-                  * 1e3).sum(axis=1)
+                                          year=year,
+                                          scale_by_pop=scale_by_pop)
+                  * 1e3)
                  .rename(index=dict_region_code(keys='natcode_nuts3',
-                                                values='ags_lk'))
-                 .to_frame()
-                 .rename(columns={0:"value"})
-                 .assign(BL=lambda x: [bl_dict().get(int(i[: -3]))
-                                       for i in x.index.astype(str)]))
+                                                values='ags_lk')))
 
-    total_sum = sv_yearly.drop('BL', axis=1).sum().sum()
+    # Sum up consumption for all household sizes
+    if by == "households":
+        sv_yearly = sv_yearly.sum(axis=1)
+        sv_yearly.name = "value"
+    sv_yearly = sv_yearly.to_frame().assign(
+        BL=lambda x: [bl_dict().get(int(i[: -3]))
+                      for i in x.index.astype(str)]
+    )
+
+    total_sum = sv_yearly.value.sum()
 
     # Create empty 15min-index'ed DataFrame for target year
     idx = pd.date_range(start=str(year), end=str(year+1), freq='15T')[:-1]
@@ -1079,7 +1086,7 @@ def disagg_temporal_gas_CTS(detailed=False, use_nuts3code=False, **kwargs):
             for slp in list(dict.fromkeys(slp_wz_g().values())):
                 f = ('Lastprofil_{}.xls'.format(slp))
                 slp_profil = pd.read_excel(data_in('temporal',
-                                                   'Gas Load Profiles', f))
+                                                   'gas_load_profiles', f))
                 slp_profil = pd.DataFrame(slp_profil.set_index(['Tagestyp',
                                             'Temperatur\nin °C\nkleiner']))
                 slp_profil.columns = pd.to_datetime(slp_profil.columns,
@@ -1105,6 +1112,7 @@ def disagg_temporal_gas_CTS(detailed=False, use_nuts3code=False, **kwargs):
         df = df[gv_lk.index.astype(str)]
 
     if use_nuts3code:
+        df.columns = df.columns.astype(int)
         df = df.rename(columns=dict_region_code(level='lk', keys='ags_lk',
                                                 values='natcode_nuts3'),
                        level=(0 if detailed else None))
@@ -1211,7 +1219,7 @@ def disagg_temporal_gas_households(use_nuts3code=False, how='top-down',
             for slp in [slp_household_gas()[x] for x in tw_df_lk.columns.values]:
                 f = ('Lastprofil_{}.xls'.format(slp))
                 slp_profil = pd.read_excel(data_in('temporal',
-                                                   'Gas Load Profiles', f))
+                                                   'gas_load_profiles', f))
                 slp_profil = pd.DataFrame(slp_profil.set_index(['Tagestyp',
                                             'Temperatur\nin °C\nkleiner']))
                 slp_profil.columns = pd.to_datetime(slp_profil.columns,
